@@ -351,6 +351,7 @@ export function ClipNoteApp() {
   const [activeHistoryId, setActiveHistoryId] = useState<string | null>(null);
   const [resumeAt, setResumeAt] = useState(0);
   const [user, setUser] = useState<User | null | undefined>(undefined);
+  const [authMode, setAuthMode] = useState<"local" | "code">("code");
   const [authOpen, setAuthOpen] = useState(false);
   const [homeView, setHomeView] = useState<"study" | "courses">("study");
   const [courseToOpen, setCourseToOpen] = useState<string | null>(null);
@@ -410,7 +411,7 @@ export function ClipNoteApp() {
   useEffect(() => {
     fetch("/api/auth")
       .then((response) => response.json())
-      .then((result) => setUser(result.user || null))
+      .then((result) => { setAuthMode(result.authMode === "local" ? "local" : "code"); setUser(result.user || null); })
       .catch(() => setUser(null));
   }, []);
   // Keep the workspace visible across a browser refresh. The analysis request is
@@ -790,7 +791,7 @@ export function ClipNoteApp() {
     );
   if (user && processing)
     return <ProcessingWorkspace processing={processing} playerUrl={playerUrl} source={source as "youtube" | "upload"} url={url} youtubePlayer={youtubePlayer} />;
-  if (!user) return <PublicLanding authOpen={authOpen} setAuthOpen={setAuthOpen} onAuthenticated={setUser} />;
+  if (!user) return <PublicLanding authMode={authMode} authOpen={authOpen} setAuthOpen={setAuthOpen} onAuthenticated={setUser} />;
   return (
     <main className="app-shell min-h-screen bg-[#f7f7f6] text-[#171a22]">
       <aside className="app-sidebar">
@@ -1032,21 +1033,20 @@ function Header({ user }: { user?: User }) {
   );
 }
 
-function PublicLanding({ authOpen, setAuthOpen, onAuthenticated }: { authOpen: boolean; setAuthOpen: (value: boolean) => void; onAuthenticated: (user: User) => void }) {
-  // Keeping the local test account in the form makes it possible to sign in
-  // immediately, while the HttpOnly cookie keeps that login through refreshes
-  // and browser restarts for a year.
-  const [email, setEmail] = useState("local@mail.com");
+function PublicLanding({ authMode, authOpen, setAuthOpen, onAuthenticated }: { authMode: "local" | "code"; authOpen: boolean; setAuthOpen: (value: boolean) => void; onAuthenticated: (user: User) => void }) {
+  const [username, setUsername] = useState("");
+  const [email, setEmail] = useState("");
   const [name, setName] = useState("local user");
+  const [accessCode, setAccessCode] = useState("");
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
   const signIn = async (event: FormEvent) => {
     event.preventDefault(); setLoading(true); setError("");
     try {
-      const response = await fetch("/api/auth", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ email, name }) });
+      const response = await fetch("/api/auth", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(authMode === "code" ? { username, email, accessCode } : { email: email || "local@mail.com", name }) });
       const result = await response.json();
       if (!response.ok) throw new Error(result.error || "Could not sign you in.");
-      onAuthenticated(result.user); setAuthOpen(false);
+      onAuthenticated(result.user); setAccessCode(""); setAuthOpen(false);
     } catch (reason) { setError(reason instanceof Error ? reason.message : "Could not sign you in."); }
     finally { setLoading(false); }
   };
@@ -1058,7 +1058,7 @@ function PublicLanding({ authOpen, setAuthOpen, onAuthenticated }: { authOpen: b
     </section>
     <section id="how" className="landing-steps"><p className="eyebrow">DESIGNED FOR DEEPER LEARNING</p><h2>From video to a study plan in minutes.</h2><div>{[["01", "Add a source", "Browse a course, paste a YouTube link, or upload your lecture."], ["02", "Make it clear", "Get focused notes and a searchable transcript."], ["03", "Keep learning", "Ask questions, take a quiz, and explore a concept map."]].map(([number, title, copy]) => <article key={number}><span>{number}</span><h3>{title}</h3><p>{copy}</p></article>)}</div></section>
     <section className="landing-sources"><p className="eyebrow">LEARNING SOURCES</p><h2>Explore more ways to learn.</h2><p>Browse course material from <a href="https://nptel.ac.in/" target="_blank" rel="noreferrer">NPTEL</a>, or bring your own lecture. ClipNote is an independent study tool; source credit and original links accompany each course.</p></section>
-    {authOpen && <div className="auth-overlay" role="dialog" aria-modal="true" aria-labelledby="login-title"><form className="auth-card" onSubmit={signIn}><button type="button" className="auth-close" onClick={() => setAuthOpen(false)} aria-label="Close sign in">×</button><span className="auth-logo"><ScanLine size={20} /></span><p className="eyebrow">LOCAL DEVELOPMENT LOGIN</p><h2 id="login-title">Start your study space.</h2><p className="auth-copy">A demo account is ready for local testing. Your login and saved studies persist on this device.</p><label>Name <Input value={name} onChange={(event) => setName(event.target.value)} placeholder="local user" required /></label><label>Email <Input value={email} onChange={(event) => setEmail(event.target.value)} placeholder="local@mail.com" type="email" required /></label>{error && <p className="auth-error">{error}</p>}<Button type="submit" disabled={loading}>{loading ? "Signing in…" : "Sign in as local user"}<ArrowRight className="ml-auto" size={17} /></Button><small>Local testing account: local user · local@mail.com</small></form></div>}
+    {authOpen && <div className="auth-overlay" role="dialog" aria-modal="true" aria-labelledby="login-title"><form className="auth-card" onSubmit={signIn}><button type="button" className="auth-close" onClick={() => setAuthOpen(false)} aria-label="Close sign in">×</button><span className="auth-logo"><ScanLine size={20} /></span><p className="eyebrow">{authMode === "code" ? "ACCESS CODE SIGN IN" : "LOCAL DEVELOPMENT LOGIN"}</p><h2 id="login-title">Start your study space.</h2><p className="auth-copy">{authMode === "code" ? "Choose a username and enter your email with the five-digit access code you received. Use the same details to return." : "A demo account is ready for local testing. Your login and saved studies persist on this device."}</p>{authMode === "local" && <label>Name <Input value={name} onChange={(event) => setName(event.target.value)} placeholder="local user" required /></label>}{authMode === "code" && <label>Username <Input value={username} onChange={(event) => setUsername(event.target.value)} placeholder="yourname" autoComplete="username" required /></label>}<label>Email <Input value={email} onChange={(event) => setEmail(event.target.value)} placeholder={authMode === "code" ? "you@example.com" : "local@mail.com"} type="email" autoComplete="email" required={authMode === "code"} /></label>{authMode === "code" && <label>Access code <Input value={accessCode} onChange={(event) => setAccessCode(event.target.value)} type="password" inputMode="numeric" pattern="[0-9]{5}" maxLength={5} autoComplete="current-password" required /></label>}{error && <p className="auth-error">{error}</p>}<Button type="submit" disabled={loading}>{loading ? "Signing in…" : authMode === "code" ? "Continue" : "Sign in as local user"}<ArrowRight className="ml-auto" size={17} /></Button>{authMode === "local" && <small>Local testing account: local user · local@mail.com</small>}</form></div>}
   </main>;
 }
 function HowItWorks() {

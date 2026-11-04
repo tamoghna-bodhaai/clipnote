@@ -6,6 +6,7 @@ import { promisify } from "util";
 import { ConfigurationError } from "@/lib/openai";
 import { mediaTools } from "@/lib/media-tools";
 import { transcribeSource, type Analysis } from "@/lib/analysis";
+import { currentUser, unauthorized } from "@/lib/current-user";
 
 export const runtime = "nodejs";
 export const maxDuration = 300;
@@ -34,6 +35,7 @@ async function analyzeYoutube(url: string, parentDirectory: string, index: numbe
 }
 
 export async function POST(request: Request) {
+  if (!await currentUser()) return unauthorized();
   let directory: string | undefined;
   try {
     const form = await request.formData();

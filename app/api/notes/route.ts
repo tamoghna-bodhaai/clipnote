@@ -1,6 +1,8 @@
 import { ConfigurationError, summarize } from "@/lib/openai";
+import { currentUser, unauthorized } from "@/lib/current-user";
 export const runtime = "nodejs";
 export async function POST(request: Request) {
+  if (!await currentUser()) return unauthorized();
   try {
     const { transcript, mode, language = "English" } = await request.json();
     if (typeof transcript !== "string" || !transcript.trim() || !["brief", "detailed", "deep"].includes(mode)) return Response.json({ error: "A transcript and a valid note style are required." }, { status: 400 });

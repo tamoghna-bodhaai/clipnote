@@ -1,4 +1,5 @@
 import { ConfigurationError } from "@/lib/openai";
+import { currentUser, unauthorized } from "@/lib/current-user";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -8,6 +9,7 @@ const audioFormats: Record<string, string> = {
 };
 
 export async function POST(request: Request) {
+  if (!await currentUser()) return unauthorized();
   try {
     const form = await request.formData();
     const audio = form.get("audio");

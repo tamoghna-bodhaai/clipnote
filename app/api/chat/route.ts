@@ -1,8 +1,10 @@
 import { ConfigurationError, aiClient } from "@/lib/openai";
 import type OpenAI from "openai";
+import { currentUser, unauthorized } from "@/lib/current-user";
 export const runtime = "nodejs";
 type Segment = { start: number; end: number; text: string };
 export async function POST(request: Request) {
+  if (!await currentUser()) return unauthorized();
   try {
     const { question, segments, history = [], start, end, pauseTime, language = "English" } = await request.json();
     if (typeof question !== "string" || !question.trim() || question.length > 4000 || !Array.isArray(segments) || !segments.length) return Response.json({ error: "A question and transcript are required." }, { status: 400 });

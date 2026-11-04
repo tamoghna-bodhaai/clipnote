@@ -2,6 +2,7 @@ import { randomUUID } from "crypto";
 import { existsSync, mkdirSync, renameSync } from "fs";
 import { join } from "path";
 import { DatabaseSync } from "node:sqlite";
+import { isActiveCodeHash, normalizeIdentifier, productionAuth } from "@/lib/auth";
 
 let database: DatabaseSync | undefined;
 
@@ -32,6 +33,9 @@ function db() {
   CREATE TABLE IF NOT EXISTS sessions (
     token TEXT PRIMARY KEY, user_id TEXT NOT NULL, created_at TEXT NOT NULL,
     FOREIGN KEY(user_id) REFERENCES users(id) ON DELETE CASCADE
+  );
+  CREATE TABLE IF NOT EXISTS login_attempts (
+    scope TEXT PRIMARY KEY, attempts INTEGER NOT NULL, expires_at INTEGER NOT NULL
   );
   CREATE TABLE IF NOT EXISTS studies (
     id TEXT PRIMARY KEY, user_id TEXT NOT NULL, created_at TEXT NOT NULL,
@@ -84,6 +88,12 @@ function db() {
   CREATE INDEX IF NOT EXISTS course_progress_user_updated ON course_progress(user_id, updated_at DESC);
 `);
   const courseColumns = database.prepare("PRAGMA table_info(catalog_courses)").all() as { name: string }[];
+  const sessionColumns = database.prepare("PRAGMA table_info(sessions)").all() as { name: string }[];
+  if (!sessionColumns.some((column) => column.name === "auth_mode")) database.exec("ALTER TABLE sessions ADD COLUMN auth_mode TEXT NOT NULL DEFAULT 'local'");
+  const userColumns = database.prepare("PRAGMA table_info(users)").all() as { name: string }[];
+  if (!userColumns.some((column) => column.name === "username")) database.exec("ALTER TABLE users ADD COLUMN username TEXT");
+  if (!userColumns.some((column) => column.name === "access_code_hash")) database.exec("ALTER TABLE users ADD COLUMN access_code_hash TEXT");
+  database.exec("CREATE UNIQUE INDEX IF NOT EXISTS users_username ON users(username); CREATE UNIQUE INDEX IF NOT EXISTS users_access_code_hash ON users(access_code_hash)");
   if (!courseColumns.some((column) => column.name === "credit_name")) database.exec("ALTER TABLE catalog_courses ADD COLUMN credit_name TEXT NOT NULL DEFAULT ''");
   if (!courseColumns.some((column) => column.name === "license_url")) database.exec("ALTER TABLE catalog_courses ADD COLUMN license_url TEXT NOT NULL DEFAULT ''");
   // MIT OCW is intentionally not part of the video-course catalogue: many
@@ -114,19 +124,59 @@ export function databaseHealthcheck() {
 
 export type DbUser = { id: string; email: string; name: string };
 
+export function allowLoginAttempt(scope: string, limit: number) {
+  const connection = db();
+  const now = Date.now();
+  connection.prepare(`INSERT INTO login_attempts (scope, attempts, expires_at) VALUES (?, 1, ?)
+    ON CONFLICT(scope) DO UPDATE SET attempts = CASE WHEN expires_at <= ? THEN 1 ELSE attempts + 1 END,
+    expires_at = CASE WHEN expires_at <= ? THEN excluded.expires_at ELSE expires_at END`)
+    .run(scope, now + 15 * 60 * 1000, now, now);
+  const row = connection.prepare("SELECT attempts FROM login_attempts WHERE scope = ?").get(scope) as { attempts: number };
+  return row.attempts <= limit;
+}
+
 export function createSession(email: string, name?: string) {
   const normalized = email.trim().toLowerCase();
   const existing = db().prepare("SELECT id, email, name FROM users WHERE email = ?").get(normalized) as DbUser | undefined;
   const user = existing || { id: randomUUID(), email: normalized, name: name?.trim() || normalized.split("@")[0] || "Learner" };
   if (!existing) db().prepare("INSERT INTO users (id, email, name, created_at) VALUES (?, ?, ?, ?)").run(user.id, user.email, user.name, new Date().toISOString());
   const token = randomUUID();
-  db().prepare("INSERT INTO sessions (token, user_id, created_at) VALUES (?, ?, ?)").run(token, user.id, new Date().toISOString());
+  db().prepare("INSERT INTO sessions (token, user_id, created_at, auth_mode) VALUES (?, ?, ?, 'local')").run(token, user.id, new Date().toISOString());
   return { token, user };
+}
+
+export function createCodeSession(username: string, email: string, codeHash: string) {
+  const connection = db();
+  const normalizedUsername = normalizeIdentifier(username);
+  const normalizedEmail = normalizeIdentifier(email);
+  connection.exec("BEGIN IMMEDIATE");
+  try {
+    let user = connection.prepare("SELECT id, email, name, username FROM users WHERE access_code_hash = ?").get(codeHash) as (DbUser & { username: string | null }) | undefined;
+    if (user) {
+      if (user.username !== normalizedUsername || user.email !== normalizedEmail) throw new Error("This access code belongs to another account.");
+    } else {
+      const emailOwner = connection.prepare("SELECT id FROM users WHERE email = ?").get(normalizedEmail) as { id: string } | undefined;
+      const usernameOwner = connection.prepare("SELECT id FROM users WHERE username = ?").get(normalizedUsername) as { id: string } | undefined;
+      if (usernameOwner || emailOwner) throw new Error("This username or email is already in use.");
+      user = { id: randomUUID(), email: normalizedEmail, name: normalizedUsername, username: normalizedUsername };
+      connection.prepare("INSERT INTO users (id, email, name, created_at, username, access_code_hash) VALUES (?, ?, ?, ?, ?, ?)").run(user.id, user.email, user.name, new Date().toISOString(), user.username, codeHash);
+    }
+    const token = randomUUID();
+    connection.prepare("INSERT INTO sessions (token, user_id, created_at, auth_mode) VALUES (?, ?, ?, 'code_v2')").run(token, user.id, new Date().toISOString());
+    connection.exec("COMMIT");
+    return { token, user: { id: user.id, email: user.email, name: user.name } };
+  } catch (error) {
+    connection.exec("ROLLBACK");
+    throw error;
+  }
 }
 
 export function userForToken(token?: string) {
   if (!token) return null;
-  return (db().prepare("SELECT u.id, u.email, u.name FROM sessions s JOIN users u ON u.id = s.user_id WHERE s.token = ?").get(token) as DbUser | undefined) || null;
+  const row = db().prepare("SELECT u.id, u.email, u.name, u.access_code_hash AS codeHash, s.auth_mode AS authMode, s.created_at AS createdAt FROM sessions s JOIN users u ON u.id = s.user_id WHERE s.token = ?").get(token) as (DbUser & { codeHash: string | null; authMode: string; createdAt: string }) | undefined;
+  if (!row) return null;
+  if (productionAuth && (row.authMode !== "code_v2" || !isActiveCodeHash(row.codeHash) || !Number.isFinite(Date.parse(row.createdAt)) || Date.now() - Date.parse(row.createdAt) > 30 * 24 * 60 * 60 * 1000)) return null;
+  return { id: row.id, email: row.email, name: row.name };
 }
 
 export function removeSession(token?: string) {

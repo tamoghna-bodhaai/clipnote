@@ -1,27 +1,56 @@
 import { cookies } from "next/headers";
-import { createSession, removeSession, userForToken } from "@/lib/db";
+import { createHash } from "crypto";
+import { allowLoginAttempt, createCodeSession, createSession, removeSession, userForToken } from "@/lib/db";
+import { accessCodesConfigured, normalizeIdentifier, productionAuth, validEmail, validUsername, verifiedCodeHash } from "@/lib/auth";
 
 export const dynamic = "force-dynamic";
 
 const cookieName = "clipnote_session";
-const localSessionSeconds = 60 * 60 * 24 * 365;
+const sessionSeconds = productionAuth ? 60 * 60 * 24 * 30 : 60 * 60 * 24 * 365;
+
+function sameOrigin(request: Request) {
+  const origin = request.headers.get("origin");
+  return !origin || origin === new URL(request.url).origin;
+}
 
 export async function GET() {
   const token = (await cookies()).get(cookieName)?.value;
-  return Response.json({ user: userForToken(token) });
+  return Response.json({ user: userForToken(token), authMode: productionAuth ? "code" : "local" }, { headers: { "Cache-Control": "no-store" } });
 }
 
 export async function POST(request: Request) {
-  const { email, name } = await request.json();
-  if (typeof email !== "string" || !/^\S+@\S+\.\S+$/.test(email)) return Response.json({ error: "Enter a valid email address." }, { status: 400 });
-  const { token, user } = createSession(email, typeof name === "string" ? name : undefined);
+  if (!sameOrigin(request)) return Response.json({ error: "Invalid request origin." }, { status: 403 });
+  let body: Record<string, unknown>;
+  try { body = await request.json(); } catch { return Response.json({ error: "Invalid request." }, { status: 400 }); }
+  const email = typeof body.email === "string" ? normalizeIdentifier(body.email) : "";
+  let session: ReturnType<typeof createSession>;
+  if (productionAuth) {
+    if (!accessCodesConfigured()) return Response.json({ error: "Sign in is not configured. Contact the site administrator." }, { status: 503 });
+    const clientAddress = request.headers.get("x-forwarded-for")?.split(",").at(-1)?.trim() || request.headers.get("x-real-ip") || "unknown";
+    const clientScope = `ip:${createHash("sha256").update(clientAddress).digest("hex")}`;
+    if (!allowLoginAttempt(clientScope, 5) || !allowLoginAttempt("global", 50)) {
+      return Response.json({ error: "Too many sign-in attempts. Try again in 15 minutes." }, { status: 429, headers: { "Retry-After": "900" } });
+    }
+    const username = typeof body.username === "string" ? normalizeIdentifier(body.username) : "";
+    const codeHash = typeof body.accessCode === "string" && /^\d{5}$/.test(body.accessCode) ? verifiedCodeHash(body.accessCode) : null;
+    if (!validUsername(username) || !validEmail(email) || !codeHash) return Response.json({ error: "Enter a valid username, email, and access code." }, { status: 401 });
+    try { session = createCodeSession(username, email, codeHash); }
+    catch { return Response.json({ error: "This code or account details cannot be used. Check the details you used before." }, { status: 409 }); }
+  } else if (!validEmail(email)) {
+    return Response.json({ error: "Enter a valid email address." }, { status: 400 });
+  } else {
+    session = createSession(email, typeof body.name === "string" ? body.name : undefined);
+  }
+  const { token, user } = session;
   const response = Response.json({ user });
   const secure = process.env.NODE_ENV === "production" ? "; Secure" : "";
-  response.headers.set("Set-Cookie", `${cookieName}=${token}; Path=/; HttpOnly; SameSite=Lax; Max-Age=${localSessionSeconds}${secure}`);
+  response.headers.set("Set-Cookie", `${cookieName}=${token}; Path=/; HttpOnly; SameSite=Lax; Max-Age=${sessionSeconds}${secure}`);
+  response.headers.set("Cache-Control", "no-store");
   return response;
 }
 
-export async function DELETE() {
+export async function DELETE(request: Request) {
+  if (!sameOrigin(request)) return Response.json({ error: "Invalid request origin." }, { status: 403 });
   const store = await cookies();
   removeSession(store.get(cookieName)?.value);
   const response = Response.json({ ok: true });
