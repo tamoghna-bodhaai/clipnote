@@ -569,8 +569,17 @@ export function ClipNoteApp() {
       body.set("urls", extraUrls);
       body.set("language", language);
       if (upload) body.set("video", upload);
-      const response = await fetch("/api/analyze", { method: "POST", body });
-      const result = await response.json();
+      let response = await fetch("/api/analyze", { method: "POST", body });
+      let result = await response.json();
+      const jobIds = () => (result.jobs || (result.job ? [result.job] : [])).map((job: { videoId?: string }) => job.videoId).filter(Boolean);
+      if (response.status === 202 && jobIds().length) {
+        for (let attempt = 0; attempt < 120 && response.status === 202; attempt++) {
+          await new Promise((resolve) => setTimeout(resolve, 2500));
+          response = await fetch(`/api/analyze?videoIds=${encodeURIComponent(jobIds().join(","))}&language=${encodeURIComponent(language)}`, { cache: "no-store" });
+          result = await response.json();
+        }
+        if (response.status === 202) throw new Error("Your video is still being prepared. Please try again in a moment.");
+      }
       if (!response.ok)
         throw new Error(result.error || "Something went wrong.");
       const analyses = result.analyses || [result];
@@ -851,14 +860,14 @@ export function ClipNoteApp() {
                 <form onSubmit={analyze} className="p-4">
                   <TabsContent value="youtube">
                     <label className="mb-2 block text-sm font-bold">
-                      YouTube video or playlist URL
+                      YouTube video URL
                     </label>
                     <div className="flex gap-2">
                       <LinkIcon className="mt-3 size-5 shrink-0 text-[#9a9faa]" />
                       <Input
                         value={url}
                         onChange={(event) => setUrl(event.target.value)}
-                        placeholder="Paste a YouTube video or playlist link"
+                        placeholder="Paste a YouTube video link"
                       />
                     </div>
                     <label className="mb-2 mt-4 block text-sm font-bold">
@@ -874,7 +883,7 @@ export function ClipNoteApp() {
                       className="min-h-24"
                     />
                     <p className="mt-2 text-xs text-[#8b919d]">
-                      Analyze a playlist or up to 20 individual YouTube videos
+                      Analyze up to 20 individual YouTube videos in one study session.
                       in one study session.
                     </p>
                   </TabsContent>

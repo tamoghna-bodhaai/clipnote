@@ -62,6 +62,12 @@ function db() {
     error TEXT, updated_at TEXT NOT NULL,
     FOREIGN KEY(lecture_id) REFERENCES catalog_lectures(id)
   );
+  CREATE TABLE IF NOT EXISTS youtube_transcripts (
+    video_id TEXT PRIMARY KEY, source_url TEXT NOT NULL, title TEXT NOT NULL DEFAULT '',
+    transcript TEXT, segments TEXT, status TEXT NOT NULL, error TEXT,
+    updated_at TEXT NOT NULL
+  );
+  CREATE INDEX IF NOT EXISTS youtube_transcripts_status ON youtube_transcripts(status, updated_at);
   CREATE TABLE IF NOT EXISTS study_artifacts (
     study_id TEXT NOT NULL, user_id TEXT NOT NULL, lecture_key TEXT NOT NULL,
     kind TEXT NOT NULL, language TEXT NOT NULL, content TEXT NOT NULL,
@@ -305,6 +311,31 @@ export function claimLectureJob(id: string) {
   db().prepare("INSERT OR IGNORE INTO lecture_jobs (lecture_id, status, updated_at) VALUES (?, 'pending', ?)").run(id, now);
   return db().prepare("UPDATE lecture_jobs SET status='processing', error=NULL, updated_at=? WHERE lecture_id=? AND (status IN ('pending','error') OR (status='processing' AND updated_at < ?))")
     .run(now, id, new Date(Date.now() - 15 * 60_000).toISOString()).changes > 0;
+}
+
+export type YoutubeTranscriptJob = {
+  videoId: string; sourceUrl: string; title: string; transcript: string | null;
+  segments: { start: number; end: number; text: string }[] | null;
+  status: "pending" | "processing" | "ready" | "error"; error: string | null; updatedAt: string;
+};
+export function getYoutubeTranscriptJob(videoId: string): YoutubeTranscriptJob | null {
+  const row = db().prepare("SELECT video_id as videoId, source_url as sourceUrl, title, transcript, segments, status, error, updated_at as updatedAt FROM youtube_transcripts WHERE video_id=?").get(videoId) as Omit<YoutubeTranscriptJob, "segments"> & { segments: string | null } | undefined;
+  return row ? { ...row, segments: row.segments ? JSON.parse(row.segments) : null } : null;
+}
+export function claimYoutubeTranscriptJob(videoId: string, sourceUrl: string) {
+  const now = new Date().toISOString();
+  const connection = db();
+  connection.prepare("INSERT OR IGNORE INTO youtube_transcripts (video_id, source_url, status, updated_at) VALUES (?, ?, 'pending', ?)").run(videoId, sourceUrl, now);
+  return connection.prepare("UPDATE youtube_transcripts SET source_url=?, status='processing', error=NULL, updated_at=? WHERE video_id=? AND (status IN ('pending', 'error') OR (status='processing' AND updated_at < ?))")
+    .run(sourceUrl, now, videoId, new Date(Date.now() - 15 * 60_000).toISOString()).changes > 0;
+}
+export function saveYoutubeTranscriptJob(videoId: string, result: { sourceUrl: string; title: string; transcript: string; segments: { start: number; end: number; text: string }[] }) {
+  db().prepare("UPDATE youtube_transcripts SET source_url=?, title=?, transcript=?, segments=?, status='ready', error=NULL, updated_at=? WHERE video_id=?")
+    .run(result.sourceUrl, result.title, result.transcript, JSON.stringify(result.segments), new Date().toISOString(), videoId);
+}
+export function failYoutubeTranscriptJob(videoId: string, error: string) {
+  db().prepare("UPDATE youtube_transcripts SET status='error', error=?, updated_at=? WHERE video_id=?")
+    .run(error, new Date().toISOString(), videoId);
 }
 export function getArtifact(userId: string, studyId: string, lectureKey: string, kind: string, language: string) {
   const row = db().prepare("SELECT content FROM study_artifacts WHERE user_id=? AND study_id=? AND lecture_key=? AND kind=? AND language=?").get(userId, studyId, lectureKey, kind, language) as { content: string } | undefined;
