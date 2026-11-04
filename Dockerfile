@@ -22,11 +22,13 @@ ENV NODE_ENV=production \
 
 # ffmpeg extracts audio and yt-dlp retrieves supported remote media.
 RUN apt-get update \
-    && apt-get install -y --no-install-recommends ffmpeg python3-pip ca-certificates gosu \
+    && apt-get install -y --no-install-recommends ffmpeg python3 python3-pip ca-certificates gosu \
     && pip3 install --no-cache-dir --break-system-packages yt-dlp \
     && apt-get purge -y python3-pip \
     && apt-get autoremove -y \
-    && rm -rf /var/lib/apt/lists/*
+    && rm -rf /var/lib/apt/lists/* \
+    && yt-dlp --version \
+    && ffmpeg -version
 
 COPY --from=build /app/public ./public
 COPY --from=build /app/.next/standalone ./

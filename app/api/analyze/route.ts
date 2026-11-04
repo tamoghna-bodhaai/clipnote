@@ -60,7 +60,11 @@ export async function POST(request: Request) {
       return Response.json(await transcribeSource(source, uploaded!.name, directory, language));
     }
   } catch (error) {
-    const status = error instanceof ConfigurationError ? 503 : 422;
-    return Response.json({ error: error instanceof ConfigurationError ? error.message : error instanceof Error ? error.message : "Analysis failed. Check your server configuration." }, { status });
+    const missingTool = error instanceof Error && "code" in error && error.code === "ENOENT";
+    const status = error instanceof ConfigurationError || missingTool ? 503 : 422;
+    const message = missingTool
+      ? "Media processing is unavailable on this server. Install yt-dlp and ffmpeg, then redeploy."
+      : error instanceof Error ? error.message : "Analysis failed. Check your server configuration.";
+    return Response.json({ error: message }, { status });
   } finally { if (directory) await rm(directory, { recursive: true, force: true }); }
 }
