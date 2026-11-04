@@ -1,7 +1,7 @@
 import { fetchYoutubeTranscript, type Analysis } from "@/lib/analysis";
 import { claimYoutubeTranscriptJob, failYoutubeTranscriptJob, getYoutubeTranscriptJob, saveYoutubeTranscriptJob } from "@/lib/db";
 import { isYoutubeAccessError } from "@/lib/media-tools";
-import { summarize } from "@/lib/openai";
+import { ConfigurationError, summarize } from "@/lib/openai";
 
 type Segment = { start: number; end: number; text: string };
 
@@ -51,9 +51,11 @@ async function publicCaptions(videoId: string): Promise<Segment[] | null> {
 }
 
 function publicFailure(error: unknown) {
-  return isYoutubeAccessError(error)
-    ? "YouTube blocked media access from this server. Configure YTDLP_PROXY with a network route that can access YouTube, or upload the video file."
-    : error instanceof Error ? error.message : "Could not retrieve this YouTube transcript.";
+  if (isYoutubeAccessError(error)) return "YouTube denied media access after trying multiple player clients. Configure YTDLP_PROXY with a working YouTube route, or upload the video file.";
+  if (error instanceof ConfigurationError) return error.message;
+  if (error instanceof Error && "code" in error && error.code === "ENOENT") return "Media processing tools are unavailable on this server.";
+  if (error instanceof Error && /^(No audio track was found|No speech was detected|Could not access a playable video)/.test(error.message)) return error.message;
+  return "Could not extract or transcribe this video. Please try again later.";
 }
 
 async function processYoutubeTranscript(videoId: string, sourceUrl: string) {

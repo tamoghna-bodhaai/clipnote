@@ -46,5 +46,5 @@ export function isYoutubeAccessError(error: unknown) {
   const details = error instanceof Error && "stderr" in error
     ? String(error.stderr)
     : error instanceof Error ? error.message : "";
-  return isYoutubeBotError(error) || /HTTP Error 403|requested format is not available/i.test(details);
+  return isYoutubeBotError(error) || /HTTP Error 403|requested format is not available|This video is unavailable\. Error code: 152\b/i.test(details);
 }
