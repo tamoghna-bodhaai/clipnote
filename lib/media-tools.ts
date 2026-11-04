@@ -30,6 +30,8 @@ export function ytDlpArgs() {
   const args = ["--js-runtimes", "node"];
   const cookiesFile = process.env.YTDLP_COOKIES_FILE;
   if (cookiesFile) args.push("--cookies", cookiesFile);
+  const proxy = process.env.YTDLP_PROXY?.trim();
+  if (proxy) args.push("--proxy", proxy);
   return args;
 }
 
@@ -38,4 +40,11 @@ export function isYoutubeBotError(error: unknown) {
     ? String(error.stderr)
     : error instanceof Error ? error.message : "";
   return /sign in to confirm|confirm you.re not a bot/i.test(details);
+}
+
+export function isYoutubeAccessError(error: unknown) {
+  const details = error instanceof Error && "stderr" in error
+    ? String(error.stderr)
+    : error instanceof Error ? error.message : "";
+  return isYoutubeBotError(error) || /HTTP Error 403|requested format is not available/i.test(details);
 }

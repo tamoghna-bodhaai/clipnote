@@ -4,7 +4,7 @@ import { mkdir, mkdtemp, readdir, rm } from "fs/promises";
 import { tmpdir } from "os";
 import { join } from "path";
 import { promisify } from "util";
-import { mediaTools, ytDlpArgs } from "@/lib/media-tools";
+import { isYoutubeAccessError, mediaTools, ytDlpArgs } from "@/lib/media-tools";
 import { aiClient, summarize } from "@/lib/openai";
 
 const exec = promisify(execFile);
@@ -37,7 +37,22 @@ export async function fetchYoutubeTranscript(url: string, fallbackTitle: string)
   const directory = await mkdtemp(join(tmpdir(), "clipnote-youtube-"));
   try {
     const tools = mediaTools(), template = join(directory, "source.%(ext)s");
-    const { stdout } = await exec(tools.ytDlp, [...ytDlpArgs(), "--no-playlist", "--no-progress", "--print", "after_move:%(title)s", "-f", "bestaudio/best", "-o", template, url], { timeout: 300_000 });
+    const baseArgs = [...ytDlpArgs(), "--no-playlist", "--no-progress", "--print", "after_move:%(title)s", "-f", "bestaudio/best", "-o", template];
+    const strategies = [
+      [] as string[],
+      ["--extractor-args", "youtube:player_client=web_embedded;player_skip=webpage,configs"],
+      ["--extractor-args", "youtube:player_client=android_vr;player_skip=webpage,configs"],
+    ];
+    let stdout = "";
+    for (const [index, strategy] of strategies.entries()) {
+      try {
+        ({ stdout } = await exec(tools.ytDlp, [...baseArgs, ...strategy, url], { timeout: 300_000 }));
+        break;
+      } catch (error) {
+        if (!isYoutubeAccessError(error) || index === strategies.length - 1) throw error;
+        for (const name of await readdir(directory)) if (name.startsWith("source.")) await rm(join(directory, name), { force: true });
+      }
+    }
     const file = (await readdir(directory)).find((name) => name.startsWith("source."));
     if (!file) throw new Error("Could not access a playable video for this lecture.");
     return { title: stdout.trim().split("\n").at(-1) || fallbackTitle, ...await transcribeMedia(join(directory, file), directory) };

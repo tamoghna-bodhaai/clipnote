@@ -573,7 +573,7 @@ export function ClipNoteApp() {
       let result = await response.json();
       const jobIds = () => (result.jobs || (result.job ? [result.job] : [])).map((job: { videoId?: string }) => job.videoId).filter(Boolean);
       if (response.status === 202 && jobIds().length) {
-        for (let attempt = 0; attempt < 120 && response.status === 202; attempt++) {
+        for (let attempt = 0; attempt < 900 && response.status === 202; attempt++) {
           await new Promise((resolve) => setTimeout(resolve, 2500));
           response = await fetch(`/api/analyze?videoIds=${encodeURIComponent(jobIds().join(","))}&language=${encodeURIComponent(language)}`, { cache: "no-store" });
           result = await response.json();

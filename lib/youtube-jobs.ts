@@ -1,6 +1,6 @@
 import { fetchYoutubeTranscript, type Analysis } from "@/lib/analysis";
 import { claimYoutubeTranscriptJob, failYoutubeTranscriptJob, getYoutubeTranscriptJob, saveYoutubeTranscriptJob } from "@/lib/db";
-import { isYoutubeBotError } from "@/lib/media-tools";
+import { isYoutubeAccessError } from "@/lib/media-tools";
 import { summarize } from "@/lib/openai";
 
 type Segment = { start: number; end: number; text: string };
@@ -51,8 +51,8 @@ async function publicCaptions(videoId: string): Promise<Segment[] | null> {
 }
 
 function publicFailure(error: unknown) {
-  return isYoutubeBotError(error)
-    ? "YouTube could not provide captions or media to this server. Try a video with captions or upload the file."
+  return isYoutubeAccessError(error)
+    ? "YouTube blocked media access from this server. Configure YTDLP_PROXY with a network route that can access YouTube, or upload the video file."
     : error instanceof Error ? error.message : "Could not retrieve this YouTube transcript.";
 }
 

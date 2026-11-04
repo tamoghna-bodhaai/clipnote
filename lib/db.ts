@@ -327,7 +327,7 @@ export function claimYoutubeTranscriptJob(videoId: string, sourceUrl: string) {
   const connection = db();
   connection.prepare("INSERT OR IGNORE INTO youtube_transcripts (video_id, source_url, status, updated_at) VALUES (?, ?, 'pending', ?)").run(videoId, sourceUrl, now);
   return connection.prepare("UPDATE youtube_transcripts SET source_url=?, status='processing', error=NULL, updated_at=? WHERE video_id=? AND (status IN ('pending', 'error') OR (status='processing' AND updated_at < ?))")
-    .run(sourceUrl, now, videoId, new Date(Date.now() - 15 * 60_000).toISOString()).changes > 0;
+    .run(sourceUrl, now, videoId, new Date(Date.now() - 45 * 60_000).toISOString()).changes > 0;
 }
 export function saveYoutubeTranscriptJob(videoId: string, result: { sourceUrl: string; title: string; transcript: string; segments: { start: number; end: number; text: string }[] }) {
   db().prepare("UPDATE youtube_transcripts SET source_url=?, title=?, transcript=?, segments=?, status='ready', error=NULL, updated_at=? WHERE video_id=?")
