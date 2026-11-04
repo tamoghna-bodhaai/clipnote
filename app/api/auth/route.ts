@@ -2,16 +2,12 @@ import { cookies } from "next/headers";
 import { createHash } from "crypto";
 import { allowLoginAttempt, createCodeSession, createSession, removeSession, userForToken } from "@/lib/db";
 import { accessCodesConfigured, normalizeIdentifier, productionAuth, validEmail, validUsername, verifiedCodeHash } from "@/lib/auth";
+import { sameOrigin } from "@/lib/request-origin";
 
 export const dynamic = "force-dynamic";
 
 const cookieName = "clipnote_session";
 const sessionSeconds = productionAuth ? 60 * 60 * 24 * 30 : 60 * 60 * 24 * 365;
-
-function sameOrigin(request: Request) {
-  const origin = request.headers.get("origin");
-  return !origin || origin === new URL(request.url).origin;
-}
 
 export async function GET() {
   const token = (await cookies()).get(cookieName)?.value;
