@@ -22,7 +22,7 @@ ENV NODE_ENV=production \
 
 # ffmpeg extracts audio and yt-dlp retrieves supported remote media.
 RUN apt-get update \
-    && apt-get install -y --no-install-recommends ffmpeg python3-pip ca-certificates \
+    && apt-get install -y --no-install-recommends ffmpeg python3-pip ca-certificates gosu \
     && pip3 install --no-cache-dir --break-system-packages yt-dlp \
     && apt-get purge -y python3-pip \
     && apt-get autoremove -y \
@@ -32,9 +32,12 @@ COPY --from=build /app/public ./public
 COPY --from=build /app/.next/standalone ./
 COPY --from=build /app/.next/static ./.next/static
 
-# Attach a Railway Volume at /data. Without one, the app still starts but its
-# database is ephemeral, which is useful for preview deployments only.
+# The volume is mounted after image build, so its ownership is fixed by the
+# entrypoint at startup before the server drops to the node user.
 RUN mkdir -p /data && chown -R node:node /app /data
-USER node
+COPY docker-entrypoint.sh /usr/local/bin/clipnote-entrypoint
+RUN chmod +x /usr/local/bin/clipnote-entrypoint
+USER root
 EXPOSE 3000
+ENTRYPOINT ["/usr/local/bin/clipnote-entrypoint"]
 CMD ["node", "server.js"]

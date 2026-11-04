@@ -1044,8 +1044,9 @@ function PublicLanding({ authMode, authOpen, setAuthOpen, onAuthenticated }: { a
     event.preventDefault(); setLoading(true); setError("");
     try {
       const response = await fetch("/api/auth", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(authMode === "code" ? { username, email, accessCode } : { email: email || "local@mail.com", name }) });
-      const result = await response.json();
-      if (!response.ok) throw new Error(result.error || "Could not sign you in.");
+      const result = await response.json().catch(() => null);
+      if (!response.ok) throw new Error(result?.error || "Sign-in service is temporarily unavailable. Please try again.");
+      if (!result?.user) throw new Error("Could not sign you in. Please try again.");
       onAuthenticated(result.user); setAccessCode(""); setAuthOpen(false);
     } catch (reason) { setError(reason instanceof Error ? reason.message : "Could not sign you in."); }
     finally { setLoading(false); }

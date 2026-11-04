@@ -119,10 +119,12 @@ function db() {
 
 /** Used by the deployment health check to confirm the persistent store is writable. */
 export function databaseHealthcheck() {
-  db().prepare("SELECT 1").get();
+  const connection = db();
+  connection.exec("BEGIN IMMEDIATE; ROLLBACK");
 }
 
 export type DbUser = { id: string; email: string; name: string };
+export class AccountConflictError extends Error {}
 
 export function allowLoginAttempt(scope: string, limit: number) {
   const connection = db();
@@ -153,11 +155,11 @@ export function createCodeSession(username: string, email: string, codeHash: str
   try {
     let user = connection.prepare("SELECT id, email, name, username FROM users WHERE access_code_hash = ?").get(codeHash) as (DbUser & { username: string | null }) | undefined;
     if (user) {
-      if (user.username !== normalizedUsername || user.email !== normalizedEmail) throw new Error("This access code belongs to another account.");
+      if (user.username !== normalizedUsername || user.email !== normalizedEmail) throw new AccountConflictError("This access code belongs to another account.");
     } else {
       const emailOwner = connection.prepare("SELECT id FROM users WHERE email = ?").get(normalizedEmail) as { id: string } | undefined;
       const usernameOwner = connection.prepare("SELECT id FROM users WHERE username = ?").get(normalizedUsername) as { id: string } | undefined;
-      if (usernameOwner || emailOwner) throw new Error("This username or email is already in use.");
+      if (usernameOwner || emailOwner) throw new AccountConflictError("This username or email is already in use.");
       user = { id: randomUUID(), email: normalizedEmail, name: normalizedUsername, username: normalizedUsername };
       connection.prepare("INSERT INTO users (id, email, name, created_at, username, access_code_hash) VALUES (?, ?, ?, ?, ?, ?)").run(user.id, user.email, user.name, new Date().toISOString(), user.username, codeHash);
     }
