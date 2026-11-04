@@ -24,3 +24,18 @@ export function mediaTools() {
     ffmpeg: executable(process.env.FFMPEG_PATH || "", bundledFfmpeg ? join(ffmpegDirectory, bundledFfmpeg) : "") || "ffmpeg",
   };
 }
+
+/** Shared yt-dlp options for YouTube downloads and playlist expansion. */
+export function ytDlpArgs() {
+  const args = ["--js-runtimes", "node"];
+  const cookiesFile = process.env.YTDLP_COOKIES_FILE;
+  if (cookiesFile) args.push("--cookies", cookiesFile);
+  return args;
+}
+
+export function isYoutubeBotError(error: unknown) {
+  const details = error instanceof Error && "stderr" in error
+    ? String(error.stderr)
+    : error instanceof Error ? error.message : "";
+  return /sign in to confirm|confirm you.re not a bot/i.test(details);
+}

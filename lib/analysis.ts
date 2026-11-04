@@ -3,7 +3,7 @@ import { createReadStream } from "fs";
 import { mkdir, readdir } from "fs/promises";
 import { join } from "path";
 import { promisify } from "util";
-import { mediaTools } from "@/lib/media-tools";
+import { mediaTools, ytDlpArgs } from "@/lib/media-tools";
 import { aiClient, summarize } from "@/lib/openai";
 
 const exec = promisify(execFile);
@@ -31,7 +31,7 @@ export async function analyzeRemote(url: string, title: string, directory: strin
   const tools = mediaTools();
   await mkdir(directory, { recursive: true });
   const template = join(directory, "source.%(ext)s");
-  await exec(tools.ytDlp, ["--no-playlist", "--no-progress", "-f", "bestaudio/best", "-o", template, url], { timeout: 300_000 });
+  await exec(tools.ytDlp, [...ytDlpArgs(), "--no-playlist", "--no-progress", "-f", "bestaudio/best", "-o", template, url], { timeout: 300_000 });
   const file = (await readdir(directory)).find((name) => name.startsWith("source."));
   if (!file) throw new Error("Could not access a playable video for this lecture.");
   return transcribeSource(join(directory, file), title, directory, language, url);

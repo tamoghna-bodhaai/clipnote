@@ -4,7 +4,7 @@ import { tmpdir } from "os";
 import { join } from "path";
 import { promisify } from "util";
 import { ConfigurationError } from "@/lib/openai";
-import { mediaTools } from "@/lib/media-tools";
+import { isYoutubeBotError, mediaTools, ytDlpArgs } from "@/lib/media-tools";
 import { transcribeSource, type Analysis } from "@/lib/analysis";
 import { currentUser, unauthorized } from "@/lib/current-user";
 
@@ -17,7 +17,7 @@ const isPlaylist = (url: string) => /youtube\.com\/playlist\?/i.test(url);
 
 async function expandPlaylist(url: string): Promise<string[]> {
   const { ytDlp } = mediaTools();
-  const { stdout } = await exec(ytDlp, ["--flat-playlist", "--no-warnings", "--print", "%(webpage_url)s", url], { timeout: 60_000 });
+  const { stdout } = await exec(ytDlp, [...ytDlpArgs(), "--flat-playlist", "--no-warnings", "--print", "%(webpage_url)s", url], { timeout: 60_000 });
   const items = [...new Set(stdout.split("\n").map((item) => item.trim()).filter((item) => /^https?:\/\//.test(item)))].slice(0, 20);
   if (!items.length) throw new Error("Could not find videos in this playlist.");
   return items;
@@ -27,7 +27,7 @@ async function analyzeYoutube(url: string, parentDirectory: string, index: numbe
   const directory = join(parentDirectory, `video-${index}`);
   const tools = mediaTools(), template = join(directory, "source.%(ext)s");
   await mkdir(directory);
-  const { stdout } = await exec(tools.ytDlp, ["--no-playlist", "--no-progress", "--print", "after_move:%(title)s", "-f", "bestaudio/best", "-o", template, url], { timeout: 180_000 });
+  const { stdout } = await exec(tools.ytDlp, [...ytDlpArgs(), "--no-playlist", "--no-progress", "--print", "after_move:%(title)s", "-f", "bestaudio/best", "-o", template, url], { timeout: 180_000 });
   const files = await readdir(directory);
   const source = join(directory, files.find((file) => file.startsWith("source.")) || "");
   if (!source || source.endsWith(directory)) throw new Error("Could not download audio from this video.");
@@ -61,8 +61,11 @@ export async function POST(request: Request) {
     }
   } catch (error) {
     const missingTool = error instanceof Error && "code" in error && error.code === "ENOENT";
-    const status = error instanceof ConfigurationError || missingTool ? 503 : 422;
-    const message = missingTool
+    const youtubeBlocked = isYoutubeBotError(error);
+    const status = error instanceof ConfigurationError || missingTool ? 503 : youtubeBlocked ? 502 : 422;
+    const message = youtubeBlocked
+      ? "YouTube blocked this server's request and requires verification. Try uploading the video file, or ask the server administrator to configure YouTube authentication."
+      : missingTool
       ? "Media processing is unavailable on this server. Install yt-dlp and ffmpeg, then redeploy."
       : error instanceof Error ? error.message : "Analysis failed. Check your server configuration.";
     return Response.json({ error: message }, { status });
